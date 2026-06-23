@@ -1,0 +1,44 @@
+name: ChatWork Notify
+
+on:
+  push:
+    branches: [main, develop, phase2]   # 対象ブランチ。全ブランチにするならこの2行を削除
+  pull_request:
+    types: [opened, closed, reopened, ready_for_review]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build & post message
+        env:
+          # 全て一度環境変数に安全に格納します（インジェクション・文字崩れ対策）
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          COMMITS_JSON: ${{ toJSON(github.event.commits) }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          CHATWORK_TOKEN: ${{ secrets.CHATWORK_TOKEN }}
+          CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # jqに渡す際も環境変数を経由するので、メッセージ内のクォーテーションで壊れません
+            COMMITS=$(echo "$COMMITS_JSON" | jq -r '.[] | "・\(.message | split("\n")[0]) (\(.author.name))\n  \(.url)"')
+            BODY="[info][title]Push by $GITHUB_ACTOR → $GITHUB_REPOSITORY ($GITHUB_REF_NAME)[/title]${COMMITS}[/info]"
+          else
+            ACTION="$PR_ACTION"
+            if [ "$ACTION" = "closed" ] && [ "$PR_MERGED" = "true" ]; then
+              ACTION="merged"
+            fi
+            BODY="[info][title]PR ${ACTION} by $GITHUB_ACTOR[/title]#${PR_NUMBER} ${PR_TITLE} ${PR_URL}[/info]"
+          fi
+          
+          curl -s -X POST \
+            -H "X-ChatWorkToken: $CHATWORK_TOKEN" \
+            --data-urlencode "body=${BODY}" \
+            "https://api.chatwork.com/v2/rooms/${CHATWORK_ROOM_ID}/messages"
